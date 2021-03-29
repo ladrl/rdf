@@ -1,9 +1,9 @@
 {-|
 Module      : Data.RDF.Internal
 Description : Representation and Incremental Processing of RDF Data
-Copyright   : Travis Whitaker 2016
+Copyright   : Travis Whitaker 2016, Lukas Lädrach 2021
 License     : MIT
-Maintainer  : pi.boy.travis@gmail.com
+Maintainer  : pi.boy.travis@gmail.com, laedracl@gmail.com
 Stability   : Provisional
 Portability : Portable
 
@@ -17,7 +17,7 @@ Internal module.
 
 module Data.RDF.Internal where
 
-import Control.Applicative
+import Control.Applicative ( Alternative((<|>)) )
 
 import Control.DeepSeq
 
@@ -351,7 +351,8 @@ parseObject = do
     c <- A.anyChar
     case c of '<' -> IRIObject <$> (parseIRI <* A.char '>')
               '_' -> BlankObject <$> (A.char ':' *> parseBlankNodeLabel)
-              _   -> LiteralObject <$> parseLiteralBody
+              '"' -> LiteralObject <$> parseLiteralBody
+              _ -> fail "Invalid literal"
 
 -- | Parse an escaped 'IRI', i.e. an IRI enclosed in angle brackets.
 parseEscapedIRI :: A.Parser IRI
@@ -376,35 +377,16 @@ parseBlankNode = A.string "_:" *> parseBlankNodeLabel
 
 -- | Like 'parseLiteral', but without the leading double quote.
 parseLiteralBody :: A.Parser Literal
-parseLiteralBody = Literal <$> escString <*> valType
-    where valType     = valIRIType <|> valLangType <|> pure LiteralUntyped
-          valIRIType  = LiteralIRIType <$> (A.string "^^" *> parseEscapedIRI)
-          valLangType = LiteralLangType <$> (A.char '@' *> A.takeWhile1 isLang)
+parseLiteralBody = Literal <$> A.takeWhile1 (/= '"') <*> valType
+    where valType     = 
+                LiteralIRIType <$> (A.string "\"^^" *> parseIRI) <|>
+                LiteralLangType <$> (A.string "\"@" *> A.takeWhile1 isLang) <|>
+                LiteralUntyped <$ A.char '"'
           isLang c    = isAlphaNum c || (c == '-')
-          escString = unescapeAll <$> A.scan False machine
-          machine False '\\' = Just True
-          machine False '"'  = Nothing
-          machine False _    = Just False
-          machine True _     = Just False
-          unescapeAll = T.concat . unescapeFrag . T.splitOn "\\"
-          unescapeFrag []     = []
-          unescapeFrag (f:fs) = case T.uncons f of
-                Nothing        -> f : unescapeFrag fs
-                (Just (e, f')) -> T.singleton (unescape e) : f' : unescapeFrag fs
-          unescape 't' = '\t'
-          unescape 'b' = '\b'
-          unescape 'n' = '\n'
-          unescape 'r' = '\r'
-          unescape 'f' = '\f'
-          unescape c   = c
 
 -- | Parse an RDF 'Literal', including the 'LiteralType' if present.
 parseLiteral :: A.Parser Literal
 parseLiteral = A.char '"' *> parseLiteralBody
-
--- | Parse an unescaped untyped RDF 'Literal'.
-parseUnescapedLiteral :: A.Parser Literal
-parseUnescapedLiteral = Literal <$> A.takeText <*> pure LiteralUntyped
 
 -- | Make implementations for 'fromString' from a 'A.Parser'.
 fromStringParser :: A.Parser a    -- ^ The literal parser.
@@ -436,8 +418,7 @@ instance IsString IRI where
 --   your 'Literal' literals are eagerly evaluated so any malformed literals can
 --   be caught immediately. It would be nicer if this happened at compile time.
 instance IsString Literal where
-    fromString = fromStringParser p "Literal"
-        where p = parseLiteral <|> parseUnescapedLiteral
+    fromString = fromStringParser parseLiteral "Literal"
 
 -- | This instance uses 'parseBlankNode' and calls 'error' if the literal is
 --   invalid. It is not clear exactly when 'fromString' is evaluated so this
@@ -471,5 +452,4 @@ instance IsString Predicate where
 --   your 'Object' literals are eagerly evaluated so any malformed literals can
 --   be caught immediately. It would be nicer if this happened at compile time.
 instance IsString Object where
-    fromString = fromStringParser p "Object"
-        where p = parseObject <|> (LiteralObject <$> parseUnescapedLiteral)
+    fromString = fromStringParser parseObject "Object"
