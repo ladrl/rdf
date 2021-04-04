@@ -17,7 +17,7 @@ Internal module.
 
 module Data.RDF.Internal where
 
-import Control.Applicative ( Alternative((<|>)) )
+import Control.Applicative ( Alternative((<|>)), optional )
 
 import Control.DeepSeq
 
@@ -265,15 +265,16 @@ data IRIAuth = IRIAuth {
 
 -- | Predicate on 'Char's for acceptability for inclusion in an 'IRI'.
 isIRI :: Char -> Bool
-isIRI c = (c /= '<')
-       && (c /= '>')
-       && (c /= '"')
-       && (c /= '{')
-       && (c /= '}')
-       && (c /= '|')
-       && (c /= '^')
-       && (c /= '`')
-       && (c /= '\\')
+isIRI c = c /= '<'
+       && c /= '>'
+       && c /= '"'
+       && c /= '{'
+       && c /= '}'
+       && c /= '|'
+       && c /= '^'
+       && c /= '`'
+       && c /= '\\'
+       && c /= ' '
 
 -- | 'IRI' parser.
 parseIRI :: A.Parser IRI
@@ -290,9 +291,9 @@ parseScheme = A.takeWhile1 isScheme >>= check
             | isAlpha (T.head t) = pure t
             | otherwise          = fail "parseScheme: must start with letter."
           isScheme c = isAlphaNum c
-                    || (c == '+')
-                    || (c == '-')
-                    || (c == '.')
+                    || c == '+'
+                    || c == '-'
+                    || c == '.'
 
 -- | 'IRIAuth' parser.
 parseAuth :: A.Parser (Maybe IRIAuth)
@@ -303,35 +304,35 @@ parseAuth = A.option Nothing (A.string "//" *> (Just <$> parseIRIAuth))
 
 -- | 'IRIAuth' user parser.
 parseUser :: A.Parser (Maybe T.Text)
-parseUser = A.option Nothing (Just <$> (A.takeWhile1 isUser <* A.char '@'))
-    where isUser c = isIRI c && (c /= '@')
+parseUser = optional (A.takeWhile1 isUser <* A.char '@')
+    where isUser c = isIRI c && c /= '@'
 
 -- | 'IRIAuth' host parser.
 parseHost :: A.Parser T.Text
 parseHost = A.takeWhile1 isHost
-    where isHost c = isIRI c && (c /= '/') && (c /= ':')
+    where isHost c = isIRI c && c /= '/' && c /= ':'
 
 -- | 'IRIAuth' port parser.
 parsePort :: A.Parser (Maybe T.Text)
-parsePort = A.option Nothing (Just <$> (A.char ':' *> A.takeWhile1 isDigit))
+parsePort = optional (A.char ':' *> A.takeWhile1 isDigit)
 
 -- | 'IRI' path parser.
 parsePath :: A.Parser T.Text
 parsePath = A.option "" (A.char '/' *> A.takeWhile1 isPath)
-    where isPath c = isIRI c && (c /= '?') && (c /= '#')
+    where isPath c = isIRI c && c /= '?' && c /= '#'
 
 -- | 'IRI' query parser.
 parseQuery :: A.Parser (Maybe T.Text)
-parseQuery = A.option Nothing (Just <$> (A.char '?' *> A.takeWhile1 isQuery))
-    where isQuery c = isIRI c && (c/= '#')
+parseQuery = optional (A.char '?' *> A.takeWhile1 isQuery)
+    where isQuery c = isIRI c && c/= '#'
 
 -- | 'IRI' fragment parser.
 parseFragment :: A.Parser (Maybe T.Text)
-parseFragment = A.option Nothing (Just <$> (A.char '#' *> A.takeWhile1 isIRI))
+parseFragment = optional (A.char '#' *> A.takeWhile1 isIRI)
 
 -- | Parser for graph labels, i.e. either an escaped 'IRI' or the empty string.
 parseGraphLabel :: A.Parser (Maybe IRI)
-parseGraphLabel = A.option Nothing (Just <$> parseEscapedIRI)
+parseGraphLabel = optional parseEscapedIRI
 
 -- | 'Subject' parser.
 parseSubject :: A.Parser Subject
@@ -366,10 +367,10 @@ parseBlankNodeLabel = BlankNode <$> (A.takeWhile1 isLabel >>= check)
             | otherwise                              = fail "parseBlankNode"
           isLabel  = not . isSpace
           isHead c = isLabel c
-                  && (c /= '-')
-                  && (c /= '.')
+                  && c /= '-'
+                  && c /= '.'
           isTail c = isLabel c
-                  && (c /= '.')
+                  && c /= '.'
 
 -- | Parse a blank node label, with the preceeding @_:@.
 parseBlankNode :: A.Parser BlankNode
@@ -378,11 +379,11 @@ parseBlankNode = A.string "_:" *> parseBlankNodeLabel
 -- | Like 'parseLiteral', but without the leading double quote.
 parseLiteralBody :: A.Parser Literal
 parseLiteralBody = Literal <$> A.takeWhile1 (/= '"') <*> valType
-    where valType     = 
+    where valType     =
                 LiteralIRIType <$> (A.string "\"^^" *> parseIRI) <|>
                 LiteralLangType <$> (A.string "\"@" *> A.takeWhile1 isLang) <|>
                 LiteralUntyped <$ A.char '"'
-          isLang c    = isAlphaNum c || (c == '-')
+          isLang c    = isAlphaNum c || c == '-'
 
 -- | Parse an RDF 'Literal', including the 'LiteralType' if present.
 parseLiteral :: A.Parser Literal
